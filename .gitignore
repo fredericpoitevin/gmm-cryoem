@@ -1,1 +1,9 @@
+# Things we don't want to store on github
+
+# jupyter notebook checkpoints
 notebooks/.ipynb_checkpoints
+
+# files of following types
+*.mrc
+*.mrcs
+*.pdb
