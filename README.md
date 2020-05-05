@@ -33,3 +33,5 @@ git checkout -B new-branch-name
 git push origin new-branch-name
 git checkout master
 ```
+
+[GIT CHEAT SHEET](https://education.github.com/git-cheat-sheet-education.pdf)
