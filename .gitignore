@@ -7,3 +7,5 @@ notebooks/.ipynb_checkpoints
 *.mrc
 *.mrcs
 *.pdb
+*.map
+*.map.gz
