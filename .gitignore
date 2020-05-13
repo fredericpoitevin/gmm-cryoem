@@ -3,6 +3,10 @@
 # jupyter notebook checkpoints
 notebooks/.ipynb_checkpoints
 
+# pycache
+
+__pycache__/
+
 # files of following types
 *.mrc
 *.mrcs
