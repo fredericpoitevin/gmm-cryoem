@@ -12,4 +12,5 @@ dependencies:
   - plotly=4.5.2
   - requests
   - scipy
+  - ipyvolume
 
