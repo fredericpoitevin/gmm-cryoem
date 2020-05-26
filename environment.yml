@@ -13,4 +13,5 @@ dependencies:
   - requests
   - scipy
   - ipyvolume
+  - scikit-learn
 
