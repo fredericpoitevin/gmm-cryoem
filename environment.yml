@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - omnia
   - defaults
+  - astra-toolbox
 dependencies:
   - ipyvolume
   - plotly
