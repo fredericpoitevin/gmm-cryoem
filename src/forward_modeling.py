@@ -3,30 +3,24 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 #from scipy.interpolate import griddata
 
+from scipy.interpolate import griddata, RegularGridInterpolator
 def slice_volume(vol, Rotation):
     """
     Take a slice out of volume
     """
-    print(Rotation)
-
     N = vol.shape[0]
-    image = np.zeros((N,N), dtype=np.complex_)
     x = np.linspace(-1,1,N)
     y = np.linspace(-1,1,N)
     z = np.linspace(-1,1,N)
-    interpolating_function = RegularGridInterpolator((x,y,z), vol)
+    interpolating_function = RegularGridInterpolator(points=[x,y,z],values=vol,bounds_error = False, fill_value=0)
 
-    for i in range(N):
-        x = -1 + i*2/(N-1)
-        for j in range(N):
-            y = -1 + j*2/(N-1)
-            
-            vect = np.array((x,y,0))
-            vect_ = Rotation.apply(vect)
-            if np.max(np.abs(vect_))<=1:
-                image[i,j] += interpolating_function(vect_)
+    grid_x, grid_y = np.meshgrid(x,y, indexing='ij')
+    zeros = np.zeros((grid_x.shape))
+    points = np.stack([grid_x.ravel(),grid_y.ravel(), zeros.ravel()],1)
+    rot_points = Rotation.apply(points)
 
-    return image
+    image = interpolating_function(rot_points)
+    return image.reshape(N,N)
 
 def project_volume(vol, Rotation):
     """

@@ -6,7 +6,7 @@ from numpy import savetxt
 class particle:
     """particle: class that define a particle
     """
-    def __init__(self, n_atom=1, rads_atom=[1,], size=10., size_grid=32, size_image=25):
+    def __init__(self, n_atom=1, rads_atom=[1,], size=10., crds = None, size_grid=32, size_image=25):
         """
         Arguments:
         ---------
@@ -24,26 +24,30 @@ class particle:
         self.n_atom = n_atom
         self.rads_atom = rads_atom
         self.size = size
-        self.crds = size * np.random.rand(n_atom, 3)
+        if crds is None:
+            self.crds = size * np.random.rand(n_atom, 3)
+        else:
+            self.crds = crds
         self.crds -= np.mean(self.crds, axis=0)
         self.rads = rads_atom
         self.image = None
         self.size_grid = size_grid
         self.size_image = size_image
-        self.map = None
-        self.last_rot = None
+        self.volume = None
+        self.last_rot = [0,0,0]
         
-    def rotate(self, quat=None):
+    def rotate(self, rotvec=None):
         """
-        Rotating the particle with the quaternion notation.
-        If no quaternion is given, rotates randomly.
+        Rotating the particle with the rotation vector.
+        If no rotation vector is given, rotates randomly.
         """
-        if quat is None:
+        if rotvec is None:
             rotation =  R.random()
         else:
-            rotation = R.from_quat(quat)
-            
-        self.last_rot = rotation.as_rotvec()
+            rotation = R.from_rotvec(rotvec)
+        
+        abs_rotation = rotation * R.from_rotvec(self.last_rot)
+        self.last_rot = abs_rotation.as_rotvec()
         
         for i in range(self.n_atom):
             self.crds[i] = rotation.apply(self.crds[i])
@@ -64,9 +68,9 @@ class particle:
                     dx = self.crds[iat,0] - posx
                     dy = self.crds[iat,1] - posy
                     dist2 = dx*dx + dy*dy
-                    if dist2 <= 100:
+                    if dist2 <= self.size**2:
                         #integrating along z axis
-                        image[i,j] += np.sqrt(np.pi)*np.exp(-0.5*dist2/self.rads[iat]**2)
+                        image[i,j] += np.sqrt(2*np.pi*self.size_image)*self.rads[iat]*np.exp(-0.5*dist2/self.rads[iat]**2)
                         
         self.image = image
     
@@ -133,6 +137,10 @@ def generate_dataset(particle, n_projections=1,
     dataset     = np.zeros((n_projections, particle.size_grid, particle.size_grid))
     metadataset = np.zeros((n_projections, 5))
 
+    if output_map: #needs to be called before rotating the particle
+        particle.create_map() 
+        np.save(f'{reldir}/{keyword}_map', particle.volume)
+    
     for i in np.arange(n_projections):
         particle.rotate()
         dataset[i,...]   = particle.image
@@ -144,9 +152,7 @@ def generate_dataset(particle, n_projections=1,
     
     np.save(f'{reldir}/{keyword}_data', dataset)
     np.save(f'{reldir}/{keyword}_meta', metadataset)
-    if output_map:
-        particle.create_map() 
-        np.save(f'{reldir}/{keyword}_map', particle.volume)
+    
     if output_xyz:
         xyz = np.array(particle.crds)
         rad = np.array(particle.rads)
