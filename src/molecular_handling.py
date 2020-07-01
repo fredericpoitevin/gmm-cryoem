@@ -70,8 +70,9 @@ class particle:
                     dist2 = dx*dx + dy*dy
                     if dist2 <= self.size**2:
                         #integrating along z axis
-                        image[i,j] += np.sqrt(2*np.pi*self.size_image)*self.rads[iat]*np.exp(-0.5*dist2/self.rads[iat]**2)
-                        
+                        #image[i,j] += np.sqrt(2*np.pi)*self.rads[iat]*np.exp(-0.5*dist2/self.rads[iat]**2)
+                        image[i,j]+=np.sqrt(2*np.pi)*(self.size_grid-1)/self.size_image*self.rads[iat]*np.exp(-0.5*dist2/self.rads[iat]**2)
+                      
         self.image = image
     
     def show(self):
