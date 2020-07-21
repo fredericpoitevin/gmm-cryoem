@@ -28,17 +28,20 @@ def slice_volume(vol, Rotation, method='linear', angle_abs_mode = False):
 
     return image.reshape(N,N)
 
-def project_volume_bis(vol, Rotation, angle_abs_mode = False):
+def project_volume_bis(vol, Rotation, angle_abs_mode = False, mask_radius=15):
     """
     Given a real-space density volume, retrieve real-space projection after Rotation
     """
-    vol_ft = np.fft.fftn(vol)
-    vol_shift = np.fft.fftshift(vol_ft)
-    im_ft = slice_volume(vol_shift, Rotation, angle_abs_mode = angle_abs_mode)
-    im = np.fft.ifftshift(im_ft)
-    projection = np.real(np.fft.ifft2(im))
-    
-    return projection
+    mask_vol = create_circular_mask(vol.shape[0], radius = mask_radius, is_volume=True)
+    mask_slice = create_circular_mask(vol.shape[0], radius = mask_radius, is_volume=False)
+
+    vol_ft = np.fft.fftshift(np.fft.fftn(np.fft.fftshift(vol)))
+    vol_ft[~mask_vol]=0
+    im_ft = slice_volume(vol_ft, Rotation, angle_abs_mode = angle_abs_mode)
+    im_ft[~mask_slice]=0
+    im = np.real(np.fft.ifftshift(np.fft.ifft2(np.fft.ifftshift(im_ft))))
+    #im[~mask_slice]=0
+    return im
 
 def rotate_volume(vol, Rotation):
     """
@@ -101,32 +104,36 @@ def backprojection(images, orientations):
     N=images[0].shape[0]
     vol = np.zeros((N,N,N),  dtype=np.complex)
     counts = np.zeros((N,N,N))
-    mask1 = create_circular_mask(N, radius = 10)
+    #mask1 = create_circular_mask(N, radius = 10)
     
     for i in range(len(images)):
         #adding the contribution of each slices/images
         rot = R.from_rotvec(-orientations[i])
         image_i=np.fft.fftshift(np.fft.fft2(np.fft.fftshift(images[i])))
-        image_i[~mask1]=0
+        #image_i[~mask1]=0
         vol, counts = add_slice(vol, counts, image_i, rot)
 
     counts[counts == 0] = 1
-    mask = create_circular_mask(N, radius = 15)
+    mask = create_circular_mask(N, radius = 10)
     #return vol/counts
     vol = vol/counts
-    vol[~mask] = 0
+    #vol[~mask] = 0
     
     return np.real(np.fft.ifftshift(np.fft.ifftn(np.fft.ifftshift(vol))))
    
 
-def lattice_create_circular_mask(lattice, N, radius=1.):
+def lattice_create_mask(lattice, radius=1., mode='cubic'):
     """
     Mask for vectors with real cordinates.
     We'll use this function to work with the unit ball instead of the whole volume.
     """
-    dist_from_center = np.sqrt((lattice[:,0])**2 + (lattice[:,1])**2 + (lattice[:,2])**2)
-    mask = (dist_from_center < radius)
+    if mode == 'circular':
+        dist_from_center = np.sqrt((lattice[:,0])**2 + (lattice[:,1])**2 + (lattice[:,2])**2)
+        mask = (dist_from_center < radius)
+    elif mode == 'cubic':
+        mask = ((lattice[:,0]**2<1.) & (lattice[:,1]**2<1.) & (lattice[:,2]**2<1.))
     return mask
+
 
 def add_slice(vol, counts, image, rot, prob = 1):
     """
@@ -134,7 +141,7 @@ def add_slice(vol, counts, image, rot, prob = 1):
     """
     N = vol.shape[0]
     image=image.reshape((N*N,1))
-    d2 = int(N/2)
+    d2 = (N-1)/2
     
     #building rotated lattice
     x = np.linspace(-1,1,N)
@@ -145,9 +152,9 @@ def add_slice(vol, counts, image, rot, prob = 1):
     rot_points = rot.apply(points)
     
     #coordinates of the adjacent voxels
-    points_f = (np.floor(rot_points*d2))/d2
-    points_c = (np.ceil(rot_points*d2))/d2
-    
+    points_f = np.floor((rot_points+1)*d2)/d2-1
+    points_c = np.ceil((rot_points+1)*d2)/d2-1
+
     #By mixing the floor values and the ceil values, we can browse all adjacent voxels
     #we only keep the points that are inside the unit ball
     xf, yf, zf = np.split(points_f,3,1)
@@ -157,14 +164,17 @@ def add_slice(vol, counts, image, rot, prob = 1):
         """
         This auxilliary function add the contribution of the slice to a set of adjacent voxels
         """
-        mask_i = lattice_create_circular_mask(np.stack((xi,yi,zi), axis=1)[:,:,0], N)
-        dist = np.stack((xi,yi,zi), axis=1)[:,:,0] - rot_points[:]
+        mask_i = lattice_create_mask(np.stack((xi,yi,zi), axis=1)[:,:,0])
+        dist = (np.stack((xi,yi,zi), axis=1)[:,:,0] - rot_points[:])*d2
         dist = dist[mask_i]
         w = 1 - np.sqrt(np.sum(np.power(dist, 2), axis=1))
         w[w<0]=0
         w=w.reshape((-1, 1))
-        vol[(xi[mask_i]*d2+d2).astype(int),(yi[mask_i]*d2+d2).astype(int),(zi[mask_i]*d2+d2).astype(int)] += (w*image[(mask_i)]) * prob
-        counts[(xi[mask_i]*d2+d2).astype(int),(yi[mask_i]*d2+d2).astype(int),(zi[mask_i]*d2+d2).astype(int)] += w * prob
+        
+        #mask_z = (image[mask_i]<0.1) #why not
+        #w[mask_z]=0   #why not
+        vol[np.around(xi[mask_i]*d2+d2).astype(int),np.around(yi[mask_i]*d2+d2).astype(int),np.around(zi[mask_i]*d2+d2).astype(int)] += (w*image[(mask_i)]) * prob
+        counts[np.around(xi[mask_i]*d2+d2).astype(int),np.around(yi[mask_i]*d2+d2).astype(int),np.around(zi[mask_i]*d2+d2).astype(int)] += w * prob
     
     #calling the auxilliary function for all adjacent voxels
     add_for_corner(xf,yf,zf)
@@ -177,7 +187,6 @@ def add_slice(vol, counts, image, rot, prob = 1):
     add_for_corner(xc,yc,zc)
     
     return vol, counts
-
 
 
 

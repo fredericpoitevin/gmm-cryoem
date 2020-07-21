@@ -96,14 +96,15 @@ class particle:
                         dy = self.crds[iat,1] - posy
                         dz = self.crds[iat,2] - posz
                         dist2  = dx*dx + dy*dy + dz*dz
-                        if(dist2 <= 100):
+                        if(dist2 <= self.size*self.size):
                             volume[i,j,k] += np.exp(-0.5*dist2/self.rads[iat]**2)
+                            
         self.volume = volume
 
 
 def generate_dataset(particle, n_projections=1, 
                      reldir='.', keyword='particle',
-                     print_frequency=100, 
+                     print_frequency=100, save=True,
                      output_map=True, output_xyz=True):
     """ generate_dataset: generate a particle image dataset from particle object
     
@@ -138,7 +139,7 @@ def generate_dataset(particle, n_projections=1,
     dataset     = np.zeros((n_projections, particle.size_grid, particle.size_grid))
     metadataset = np.zeros((n_projections, 5))
 
-    if output_map: #needs to be called before rotating the particle
+    if output_map and save: #needs to be called before rotating the particle
         particle.create_map() 
         np.save(f'{reldir}/{keyword}_map', particle.volume)
     
@@ -150,11 +151,12 @@ def generate_dataset(particle, n_projections=1,
         metadataset[i,4] = particle.n_atom
         if (i+1)%print_frequency == 0:
             print(f'{str(i+1)} images were created')
+            
+    if save:
+        np.save(f'{reldir}/{keyword}_data', dataset)
+        np.save(f'{reldir}/{keyword}_meta', metadataset)
     
-    np.save(f'{reldir}/{keyword}_data', dataset)
-    np.save(f'{reldir}/{keyword}_meta', metadataset)
-    
-    if output_xyz:
+    if output_xyz and save:
         xyz = np.array(particle.crds)
         rad = np.array(particle.rads)
         array = np.zeros((xyz.shape[0], 4))
