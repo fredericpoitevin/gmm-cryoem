@@ -3,7 +3,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import griddata, RegularGridInterpolator
 
-def slice_volume(vol, Rotation, method='linear', angle_abs_mode = False):
+def slice_volume(vol, Rotation):
     """
     Take a slice out of volume
     """
@@ -16,31 +16,22 @@ def slice_volume(vol, Rotation, method='linear', angle_abs_mode = False):
     zeros = np.zeros((grid_x.shape))
     points = np.stack([grid_x.ravel(),grid_y.ravel(), zeros.ravel()],1)
     rot_points = Rotation.apply(points)
-    
-    if not(angle_abs_mode):
-        interpolating_function = RegularGridInterpolator(points=[x,y,z],values=vol,bounds_error = False, fill_value=0, method=method)
-        image = interpolating_function(rot_points)
-
-    else:
-        angle_interpolating_function = RegularGridInterpolator(points=[x,y,z],values=np.angle(vol),bounds_error = False, method=method)
-        abs_interpolating_function = RegularGridInterpolator(points=[x,y,z],values=np.abs(vol),bounds_error = False, fill_value=0, method=method)
-        image = abs_interpolating_function(rot_points)*np.exp(1j*abs_interpolating_function(rot_points))
+    interpolating_function = RegularGridInterpolator(points=[x,y,z],values=vol,bounds_error = False, fill_value=0)
+    image = interpolating_function(rot_points)
 
     return image.reshape(N,N)
 
-def project_volume_bis(vol, Rotation, angle_abs_mode = False, mask_radius=15):
+def project_volume_fst(vol_ft, Rotation, mask_radius=15):
     """
-    Given a real-space density volume, retrieve real-space projection after Rotation
+    Given a real-space density volume, retrieve real-space projection after Rotation using the slice-fourier theorem
     """
-    mask_vol = create_circular_mask(vol.shape[0], radius = mask_radius, is_volume=True)
-    mask_slice = create_circular_mask(vol.shape[0], radius = mask_radius, is_volume=False)
+    mask_vol = create_circular_mask(vol_ft.shape[0], radius = mask_radius, is_volume=True)
+    mask_slice = create_circular_mask(vol_ft.shape[0], radius = mask_radius, is_volume=False)
 
-    vol_ft = np.fft.fftshift(np.fft.fftn(np.fft.fftshift(vol)))
     vol_ft[~mask_vol]=0
-    im_ft = slice_volume(vol_ft, Rotation, angle_abs_mode = angle_abs_mode)
+    im_ft = slice_volume(vol_ft, Rotation)
     im_ft[~mask_slice]=0
-    im = np.real(np.fft.ifftshift(np.fft.ifft2(np.fft.ifftshift(im_ft))))
-    #im[~mask_slice]=0
+    im = np.real(np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(im_ft))))
     return im
 
 def rotate_volume(vol, Rotation):
@@ -109,7 +100,7 @@ def backprojection(images, orientations):
     for i in range(len(images)):
         #adding the contribution of each slices/images
         rot = R.from_rotvec(-orientations[i])
-        image_i=np.fft.fftshift(np.fft.fft2(np.fft.fftshift(images[i])))
+        image_i=np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(images[i])))
         #image_i[~mask1]=0
         vol, counts = add_slice(vol, counts, image_i, rot)
 
@@ -119,7 +110,7 @@ def backprojection(images, orientations):
     vol = vol/counts
     #vol[~mask] = 0
     
-    return np.real(np.fft.ifftshift(np.fft.ifftn(np.fft.ifftshift(vol))))
+    return np.real(np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(vol))))
    
 
 def lattice_create_mask(lattice, radius=1., mode='cubic'):
@@ -189,5 +180,126 @@ def add_slice(vol, counts, image, rot, prob = 1):
     return vol, counts
 
 
+def proj_mat(Rot, N):
+    """
+    This function builds the projection matrix of rotation Rot
+    output: N**2 x N**3 projection matrix
+    """
+    mat = np.zeros((N**2, N**3))
+    
+    x = np.linspace(-1,1,N)
+    y = np.linspace(-1,1,N)
+    z = np.linspace(-1,1,N)
+    d2 = (N-1)/2
+    grid_x, grid_y = np.meshgrid(x,y, indexing='ij')
+    zeros = np.zeros((grid_x.shape))
+    points = np.stack([grid_x.ravel(),grid_y.ravel(), zeros.ravel()],1)
+    rot_points = Rot.apply(points)
+    
+    #coordinates of the adjacent voxels
+    points_f = np.floor((rot_points+1)*d2)/d2-1
+    points_c = np.ceil((rot_points+1)*d2)/d2-1
+
+    #By mixing the floor values and the ceil values, we can browse all adjacent voxels
+    #we only keep the points that are inside the unit ball
+    xf, yf, zf = np.split(points_f,3,1)
+    xc, yc, zc = np.split(points_c,3,1)
+    
+    def add_coefficients(xi,yi,zi):
+        """
+        This auxilliary function add the contribution of the slice to a set of adjacent voxels
+        """
+        mask_i = lattice_create_mask(np.stack((xi,yi,zi), axis=1)[:,:,0])
+        dist = (np.stack((xi,yi,zi), axis=1)[:,:,0] - rot_points[:])*d2
+        dist = dist[mask_i]
+        w = 1 - np.sqrt(np.sum(np.power(dist, 2), axis=1))
+        w[w<0]=0
+        w=w.reshape((-1, 1))
+        mat[(mask_i), np.around(xi[mask_i]*d2+d2).astype(int)*N**2+np.around(yi[mask_i]*d2+d2).astype(int)*N+np.around(zi[mask_i]*d2+d2).astype(int)] += w * np.identity(w.shape[0]) 
+
+    add_coefficients(xf,yf,zf)
+    add_coefficients(xc,yf,zf)
+    add_coefficients(xf,yc,zf)
+    add_coefficients(xf,yf,zc)
+    add_coefficients(xc,yc,zf)
+    add_coefficients(xf,yc,zc)
+    add_coefficients(xc,yf,zc)
+    add_coefficients(xc,yc,zc)
+    
+    for j in range(mat.shape[0]):
+        s = np.sum(mat[j, :])
+        if s!=0:
+            mat[j,:]=mat[j,:]/s
+    
+    return mat
+
+
+######################################################################################################################################################################################################################################################################################################################## HETEROGENEITY ##############################################################################################################################################################################################################################################################################################################################
+
+
+def proj_mat(Rotation, N):
+    """
+    output: N**2 x N**3 projection matrix
+    """
+    mat = np.zeros((N**2, N**3))
+    
+    x = np.linspace(-1,1,N)
+    y = np.linspace(-1,1,N)
+    z = np.linspace(-1,1,N)
+    d2 = (N-1)/2
+    grid_x, grid_y = np.meshgrid(x,y, indexing='ij')
+    zeros = np.zeros((grid_x.shape))
+    points = np.stack([grid_x.ravel(),grid_y.ravel(), zeros.ravel()],1)
+    rot_points = Rotation.apply(points)
+    
+    #coordinates of the adjacent voxels
+    points_f = np.floor((rot_points+1)*d2)/d2-1
+    points_c = np.ceil((rot_points+1)*d2)/d2-1
+
+    #By mixing the floor values and the ceil values, we can browse all adjacent voxels
+    #we only keep the points that are inside the unit ball
+    xf, yf, zf = np.split(points_f,3,1)
+    xc, yc, zc = np.split(points_c,3,1)
+    
+    def add_coefficients(xi,yi,zi):
+        """
+        This auxilliary function add the contribution of the slice to a set of adjacent voxels
+        """
+        mask_i = lattice_create_mask(np.stack((xi,yi,zi), axis=1)[:,:,0])
+        dist = (np.stack((xi,yi,zi), axis=1)[:,:,0] - rot_points[:])*d2
+        dist = dist[mask_i]
+        w = 1 - np.sqrt(np.sum(np.power(dist, 2), axis=1))
+        w[w<0]=0
+        w=w.reshape((-1, 1))
+        
+        #mask_z = (image[mask_i]<0.1) #why not
+        #w[mask_z]=0   #why not
+        mat[(mask_i), np.around(xi[mask_i]*d2+d2).astype(int)*N**2+np.around(yi[mask_i]*d2+d2).astype(int)*N+np.around(zi[mask_i]*d2+d2).astype(int)] += w * np.identity(w.shape[0]) 
+        #image[(mask_i)] += w * vol[np.around(xi[mask_i]*d2+d2).astype(int),np.around(yi[mask_i]*d2+d2).astype(int),np.around(zi[mask_i]*d2+d2).astype(int)]
+
+    add_coefficients(xf,yf,zf)
+    add_coefficients(xc,yf,zf)
+    add_coefficients(xf,yc,zf)
+    add_coefficients(xf,yf,zc)
+    add_coefficients(xc,yc,zf)
+    add_coefficients(xf,yc,zc)
+    add_coefficients(xc,yf,zc)
+    add_coefficients(xc,yc,zc)
+    
+    for j in range(mat.shape[0]):
+        s = np.sum(mat[j, :])
+        if s!=0:
+            mat[j,:]=mat[j,:]/s
+    
+    return mat
+
+
+######################################################################################################################################################################################################################################################################################################################## TOOLS ##############################################################################################################################################################################################################################################################################################################################
+
+def fft(im):
+    return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(im)))
+
+def ifft(im):
+    return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(im)))
 
 
